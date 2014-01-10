@@ -1,5 +1,13 @@
-This is the python API for GAIA.
-Make sure to have the "gaiadb-schemas" repo cloned into a dir at the same level as the "gaiadb-api-python" repo.
-Now run the ./gen.sh in obj_defs/
-This will get you all the latest avro object definitions.
-To install this package, run 'sudo pip install -e .'
+<h1>GAIA Python API</h1>
+
+<h3>Install Instructions</h3>
+<ul>
+<li>mkdir build</li>
+<li>cd build</li>
+<li>git clone https://github.com/gaia-team/gaia-api-schemas.git</li>
+<li>git clone https://github.com/gaia-team/gaia-api-python.git</li>
+<li>cd gaia-api-python/obj_defs</li>
+<li>./gen.sh</li>
+<li>cd ../../</li>
+<li>sudo pip install -e .</li>
+</ul>
