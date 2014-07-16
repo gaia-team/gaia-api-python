@@ -1,11 +1,11 @@
 from distutils.core import setup
 
 setup(
-    name='gaia',
+    name='gpudb',
     version='0.1',
-    description='Python client for Gaia Db',
-    packages=['gaia',],
-    package_data={'gaia' : ['obj_defs/*.json']},
-    url='http://gaia.gisfederal.com',
+    description='Python client for GPUdb',
+    packages=['gpudb',],
+    package_data={'gpudb' : ['obj_defs/*.json']},
+    url='http://www.gpudb.com',
 )
 

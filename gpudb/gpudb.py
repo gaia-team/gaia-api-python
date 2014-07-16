@@ -13,35 +13,47 @@ if sys.version_info >= (2, 7):
 else:
     import ordereddict as collections
 
-# Set to the actual directory of the gaia.py module when importing to get obj_defs/
-gaia_module_path = __file__
-if gaia_module_path[len(gaia_module_path)-3:] == "pyc": # allow symlinks to gaia.py
-    gaia_module_path = gaia_module_path[0:len(gaia_module_path)-1]
-if os.path.islink(gaia_module_path): # allow symlinks to gaia.py
-    gaia_module_path = os.readlink(gaia_module_path)
-gaia_module_path = os.path.dirname(os.path.abspath(gaia_module_path))
+# Set to the actual directory of the gpudb.py module when importing to get obj_defs/
+gpudb_module_path = __file__
+if gpudb_module_path[len(gpudb_module_path)-3:] == "pyc": # allow symlinks to gpudb.py
+    gpudb_module_path = gpudb_module_path[0:len(gpudb_module_path)-1]
+if os.path.islink(gpudb_module_path): # allow symlinks to gpudb.py
+    gpudb_module_path = os.readlink(gpudb_module_path)
+gpudb_module_path = os.path.dirname(os.path.abspath(gpudb_module_path))
 
 
 # ---------------------------------------------------------------------------
-# Gaia - Lightweight client class to interact with a Gaia server.
+# GPUdb - Lightweight client class to interact with a GPUdb server.
 # ---------------------------------------------------------------------------
 
-class Gaia:
+class GPUdb:
 
-    def __init__(self, gaia_ip="127.0.0.1", gaia_port="9191", encoding="BINARY", connection='HTTP'):
+    def __init__(self, gpudb_ip="127.0.0.1", gpudb_port="9191", encoding="BINARY", connection='HTTP'):
         """
-        Construct a new Gaia client instance.
+        Construct a new GPUdb client instance.
 
         Parameters:
-            gaia_ip    : The IP address of the Gaia server.
-            gaia_port  : The port of the Gaia server at the given IP address.
+            gpudb_ip    : The IP address of the GPUdb server.
+            gpudb_port  : The port of the GPUdb server at the given IP address.
             encoding   : Type of Avro encoding to use, "BINARY" or "JSON".
             connection : Connection type, currently only "HTTP" supported.
         """
-        self.gaia_ip = gaia_ip
-        self.gaia_port = gaia_port
+
+        if ":" in gpudb_ip:
+            assert gpudb_port == "", "gpudb_ip was specified with a port as '" + gpudb_ip + "', but the port was also specified as '" + gpudb_port + "'"
+            gpudb_port = gpudb_ip[gpudb_ip.find(':')+1:]
+            gpudb_ip = gpudb_ip[0:gpudb_ip.find(':')]
+
+        self.gpudb_ip = gpudb_ip
+        self.gpudb_port = gpudb_port
         self.encoding = encoding
         self.connection = connection
+
+    # members
+    gpudb_ip    = "127.0.0.1"
+    gpudb_port  = "9191"
+    encoding   = "BINARY"
+    connection = "HTTP"
 
     # constants
     END_OF_SET = -9999
@@ -68,12 +80,12 @@ class Gaia:
     # Helper functions
     # -----------------------------------------------------------------------
 
-    def post_to_gaia_read(self, body_data, endpoint):
+    def post_to_gpudb_read(self, body_data, endpoint):
         """
         Create a HTTP connection and POST then get GET, returning the server response.
 
         Parameters:
-            body_data : Data to POST to Gaia server.
+            body_data : Data to POST to GPUdb server.
             endpoint  : Server path to POST to, e.g. "/add".
         """
 
@@ -90,18 +102,18 @@ class Gaia:
         #       fully retrying from scratch if the connection fails.
 
         nurl = ""
-        if len(self.gaia_port) > 0:
+        if len(self.gpudb_port) > 0:
             if (self.connection == 'HTTP'):
-                conn = httplib.HTTPConnection(str(self.gaia_ip) + ":" + self.gaia_port)
+                conn = httplib.HTTPConnection(str(self.gpudb_ip) + ":" + self.gpudb_port)
             else:
-                conn = httplib.HTTPSConnection(str(self.gaia_ip) + ":" + self.gaia_port)
+                conn = httplib.HTTPSConnection(str(self.gpudb_ip) + ":" + self.gpudb_port)
             nurl = endpoint
         else:
             if (self.connection == 'HTTP'):
-                conn = httplib.HTTPConnection(str(self.gaia_ip))
+                conn = httplib.HTTPConnection(str(self.gpudb_ip))
             else:
-                conn = httplib.HTTPSConnection(str(self.gaia_ip))
-            nurl = "/gaia2"+str(endpoint)
+                conn = httplib.HTTPSConnection(str(self.gpudb_ip))
+            nurl = "/gpudb2"+str(endpoint)
 
         #print nurl
         conn.request("POST", nurl, body_data, headers)
@@ -187,7 +199,7 @@ class Gaia:
         if "gaia_response" in self.loaded_schemas:
             REP_SCHEMA = self.loaded_schemas["gaia_response"]["REP_SCHEMA"]
         else:
-            REP_SCHEMA_STR = open(gaia_module_path+"/obj_defs/gaia_response.json","r").read()
+            REP_SCHEMA_STR = open(gpudb_module_path+"/obj_defs/gaia_response.json","r").read()
             REP_SCHEMA     = schema.parse(REP_SCHEMA_STR)
 
             self.loaded_schemas["gaia_response"] = { "REP_SCHEMA_STR" : REP_SCHEMA_STR,
@@ -202,7 +214,7 @@ class Gaia:
         if stype == 'none':
             out = collections.OrderedDict()
         else:
-            #DATA_SCHEMA_STR = open(gaia_module_path+"/obj_defs/%s.json"%(stype), "r").read()
+            #DATA_SCHEMA_STR = open(gpudb_module_path+"/obj_defs/%s.json"%(stype), "r").read()
             #DATA_SCHEMA = schema.parse(DATA_SCHEMA_STR)
             #out = read_orig_datum(DATA_SCHEMA, resp['data'])
             if self.encoding == 'JSON':
@@ -250,8 +262,8 @@ class Gaia:
             REQ_SCHEMA = self.loaded_schemas[base_name]["REQ_SCHEMA"]
             REP_SCHEMA = self.loaded_schemas[base_name]["REP_SCHEMA"]
         else:
-            REP_SCHEMA_STR = open(gaia_module_path+"/obj_defs/"+base_name+"_response.json", "r").read()
-            REQ_SCHEMA_STR = open(gaia_module_path+"/obj_defs/"+base_name+"_request.json",  "r").read()
+            REP_SCHEMA_STR = open(gpudb_module_path+"/obj_defs/"+base_name+"_response.json", "r").read()
+            REQ_SCHEMA_STR = open(gpudb_module_path+"/obj_defs/"+base_name+"_request.json",  "r").read()
             REP_SCHEMA     = schema.parse(REP_SCHEMA_STR)
             REQ_SCHEMA     = schema.parse(REQ_SCHEMA_STR)
 
@@ -263,7 +275,7 @@ class Gaia:
 
     def post_then_get(self, REQ_SCHEMA, REP_SCHEMA, datum, endpoint):
         """
-        Encode the datum dict using the REQ_SCHEMA, POST to Gaia server and
+        Encode the datum dict using the REQ_SCHEMA, POST to GPUdb server and
         decode the reply using the REP_SCHEMA.
 
         Parameters:
@@ -274,13 +286,13 @@ class Gaia:
         """
         #print REQ_SCHEMA, REP_SCHEMA, datum, endpoint
         encoded_datum = self.write_datum(REQ_SCHEMA, datum)
-        retval  = self.post_to_gaia_read(encoded_datum, endpoint)
+        retval  = self.post_to_gpudb_read(encoded_datum, endpoint)
 
         return self.read_datum(REP_SCHEMA, retval)
 
 
     def do_read_trigger_msg(self, encoded_datum):
-        REP_SCHEMA_STR = open(gaia_module_path+"/obj_defs/trigger_notification.json", "r").read()
+        REP_SCHEMA_STR = open(gpudb_module_path+"/obj_defs/trigger_notification.json", "r").read()
         REP_SCHEMA = schema.parse(REP_SCHEMA_STR)
 
         return self.read_orig_datum(REP_SCHEMA, encoded_datum, encoding='JSON')
@@ -1533,6 +1545,17 @@ class Gaia:
         datum["semantic_type"] = semantic_type
 
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/registertype")
+
+    def do_register_type_with_annotations(self, type_definition, label="", semantic_type="", annotations = {}):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("register_type_with_annotations")
+
+        datum = collections.OrderedDict()
+        datum["type_definition"] = type_definition
+        datum["label"] = label
+        datum["semantic_type"] = semantic_type
+        datum["annotations"] = annotations
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/registertypewithannotations")
 
     def do_register_type_big_point(self):
         (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("register_type")
