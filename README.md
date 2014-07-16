@@ -1,13 +1,10 @@
-<h1>GAIA Python API</h1>
+This is the python API for GPUdb.
 
-<h3>Install Instructions</h3>
-<ul>
-<li>mkdir build</li>
-<li>cd build</li>
-<li>git clone https://github.com/gaia-team/gaia-api-schemas.git</li>
-<li>git clone https://github.com/gaia-team/gaia-api-python.git</li>
-<li>cd gaia-api-python/obj_defs</li>
-<li>./gen.sh</li>
-<li>cd ../../</li>
-<li>sudo pip install -e .</li>
-</ul>
+Make sure to have the "gpudb-schemas" repo cloned into a dir at the same level as the "gpudb-api-python" repo.  
+
+Then run the ./gen.sh in the root directory to copy them into gpudb/obj_defs/*.json
+
+This will get you all the latest avro object definitions.
+
+To install this package, run 'sudo pip install -e .'
+
