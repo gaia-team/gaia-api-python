@@ -1,19 +1,16 @@
-import httplib
-import uuid
-import os
+# ---------------------------------------------------------------------------
+# gpudb.py - The Python API to interact with a GPUdbDB server. 
+#
+# Copyright (c) 2014 GIS Federal
+# ---------------------------------------------------------------------------
+
+import cStringIO, StringIO
+import base64, httplib
+import os, sys
 import json
+import uuid
 
-from avro import schema, datafile, io
-import cStringIO
-
-import sys
-
-if sys.version_info >= (2, 7):
-    import collections
-else:
-    import ordereddict as collections
-
-# Set to the actual directory of the gpudb.py module when importing to get obj_defs/
+# The absolute path of this gpudb.py module for loading the obj_defs/*.json files.
 gpudb_module_path = __file__
 if gpudb_module_path[len(gpudb_module_path)-3:] == "pyc": # allow symlinks to gpudb.py
     gpudb_module_path = gpudb_module_path[0:len(gpudb_module_path)-1]
@@ -21,6 +18,16 @@ if os.path.islink(gpudb_module_path): # allow symlinks to gpudb.py
     gpudb_module_path = os.readlink(gpudb_module_path)
 gpudb_module_path = os.path.dirname(os.path.abspath(gpudb_module_path))
 
+# Search for our modules first, probably don't need imp or virt envs.
+if not gpudb_module_path + "/packages" in sys.path :
+    sys.path.insert(1, gpudb_module_path + "/packages")
+
+from avro import schema, datafile, io
+
+if sys.version_info >= (2, 7):
+    import collections
+else:
+    import ordereddict as collections # a separate package
 
 # ---------------------------------------------------------------------------
 # GPUdb - Lightweight client class to interact with a GPUdb server.
@@ -28,7 +35,9 @@ gpudb_module_path = os.path.dirname(os.path.abspath(gpudb_module_path))
 
 class GPUdb:
 
-    def __init__(self, gpudb_ip="127.0.0.1", gpudb_port="9191", encoding="BINARY", connection='HTTP'):
+    def __init__(self, gpudb_ip="127.0.0.1", gpudb_port="9191",
+                       encoding="BINARY", connection='HTTP',
+                       username="", password=""):
         """
         Construct a new GPUdb client instance.
 
@@ -36,24 +45,78 @@ class GPUdb:
             gpudb_ip    : The IP address of the GPUdb server.
             gpudb_port  : The port of the GPUdb server at the given IP address.
             encoding   : Type of Avro encoding to use, "BINARY" or "JSON".
-            connection : Connection type, currently only "HTTP" supported.
+            connection : Connection type, currently only "HTTP" or "HTTPS" supported.
+            username   : An optional http username.
+            password   : The http password for the username.
         """
 
-        if ":" in gpudb_ip:
-            assert gpudb_port == "", "gpudb_ip was specified with a port as '" + gpudb_ip + "', but the port was also specified as '" + gpudb_port + "'"
-            gpudb_port = gpudb_ip[gpudb_ip.find(':')+1:]
-            gpudb_ip = gpudb_ip[0:gpudb_ip.find(':')]
+        assert (type(gpudb_ip) is str), "Expected a string gpudb_ip address, got: '"+str(gpudb_ip)+"'"
 
-        self.gpudb_ip = gpudb_ip
-        self.gpudb_port = gpudb_port
-        self.encoding = encoding
+        # gpudb_ip may take the form of :
+        #  - "https://user:password@domain.com/path/"
+
+        if gpudb_ip.startswith("http://") :    # Allow http://, but remove it.
+            gpudb_ip = gpudb_ip[7:]
+        elif gpudb_ip.startswith("https://") : # Allow https://, but remove it.
+            gpudb_ip = gpudb_ip[8:]
+            connection = "HTTPS" # force it
+
+        # Parse the username and password, if supplied.
+        gpudb_ip_at_sign_pos = gpudb_ip.find('@')
+        if gpudb_ip_at_sign_pos != -1 :
+            user_pass = gpudb_ip[:gpudb_ip_at_sign_pos]
+            gpudb_ip = gpudb_ip[gpudb_ip_at_sign_pos+1:]
+            user_pass_list = user_pass.split(':')
+            username = user_pass_list[0]
+            if len(user_pass_list) > 1 :
+                password = user_pass_list[1]
+
+        # Allow gpudb_ip include the port, "127.0.0.1:9191", only if port is empty.
+        if (gpudb_port == "") or (gpudb_port == None):
+            # Port does not have to be provided if using proxy on port 80.
+            gpudb_ip_port_pos = gpudb_ip.rfind(':')
+            if gpudb_ip_port_pos != -1 :
+                gpudb_port = gpudb_ip[gpudb_ip_port_pos+1:]
+
+            # Set the port to what we'll use, only for informational purposes.
+            if len(gpudb_port) == 0:
+                if connection == 'HTTP' :
+                    gpudb_port = 80
+                elif connection == 'HTTPS' :
+                    gpudb_port = 443
+        else:
+            # Validate gpudb_port and assemble gpudb_ip
+            try :
+                port = int(gpudb_port)
+            except :
+                assert False, "Expected a numeric gpudb_port, got: '" + str(gpudb_port) + "'"
+
+            assert (port > 0) and (port < 65536), "Expected a valid gpudb_port (1-65535), got: '"+str(gpudb_port)+"'"
+
+            gpudb_ip += ":" + str(gpudb_port)
+
+        assert (len(gpudb_ip) > 0), "Expected a valid gpudb_ip address, got an empty string."
+
+        assert (encoding in ["BINARY", "JSON"]), "Expected encoding to be either 'BINARY' or 'JSON', got: '"+str(encoding)+"'"
+        assert (connection in ["HTTP", "HTTPS"]), "Expected connection to be 'HTTP' or 'HTTPS', got: '"+str(connection)+"'"
+
+        self.gpudb_ip    = gpudb_ip
+        self.gpudb_port  = int(gpudb_port)
+        self.encoding   = encoding
         self.connection = connection
+        self.username   = username
+        self.password   = password
+        
+        #print("GPUdb ip: '%s', port: %d, encoding: '%s', connection: '%s', username: '%s', password: '%s'" %
+        #      (self.gpudb_ip, self.gpudb_port, self.encoding, self.connection, self.username, self.password))
 
     # members
-    gpudb_ip    = "127.0.0.1"
-    gpudb_port  = "9191"
-    encoding   = "BINARY"
-    connection = "HTTP"
+    gpudb_ip    = "127.0.0.1" # Input gpudb_ip with gpudb_port appended if provided.
+    gpudb_port  = "9191"      # Input gpudb_port, may be empty.
+    encoding   = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
+    connection = "HTTP"      # Input connection type, either 'HTTP' or 'HTTPS'.
+    username   = ""          # Input username or empty string for none.
+    password   = ""          # Input password or empty string for none.
 
     # constants
     END_OF_SET = -9999
@@ -92,36 +155,34 @@ class GPUdb:
         if self.encoding == 'BINARY':
             headers = {"Content-type": "application/octet-stream",
                        "Accept": "application/octet-stream"}
-
         elif self.encoding == 'JSON':
             headers = {"Content-type": "application/json",
                        "Accept": "application/json"}
+
+        if len(self.username) != 0:
+            # base64 encode the username and password
+            auth = base64.encodestring('%s:%s' % (self.username, self.password)).replace('\n', '')
+            headers["Authorization"] = ("Basic %s" % auth)
 
         # NOTE: Creating a new httplib.HTTPConnection is suprisingly just as
         #       fast as reusing a persistent one and has the advantage of
         #       fully retrying from scratch if the connection fails.
 
-        nurl = ""
-        if len(self.gpudb_port) > 0:
-            if (self.connection == 'HTTP'):
-                conn = httplib.HTTPConnection(str(self.gpudb_ip) + ":" + self.gpudb_port)
-            else:
-                conn = httplib.HTTPSConnection(str(self.gpudb_ip) + ":" + self.gpudb_port)
-            nurl = endpoint
+        if (self.connection == 'HTTP'):
+            conn = httplib.HTTPConnection(self.gpudb_ip)
+        elif (self.connection == 'HTTPS'):
+            conn = httplib.HTTPSConnection(self.gpudb_ip)
         else:
-            if (self.connection == 'HTTP'):
-                conn = httplib.HTTPConnection(str(self.gpudb_ip))
-            else:
-                conn = httplib.HTTPSConnection(str(self.gpudb_ip))
-            nurl = "/gpudb2"+str(endpoint)
+             assert False, "Unknown connection type, should be 'HTTP' or 'HTTPS'"
 
         #print nurl
-        conn.request("POST", nurl, body_data, headers)
+        conn.request("POST", endpoint, body_data, headers)
         #print "conn.request"
 
         resp = conn.getresponse()
         resp_data = resp.read()
-        #print 'response size: ',len(resp_data)
+        #print("response size: %d"   % (len(resp_data)))
+        #print("response     : '%s'" % (resp_data))
 
         return  str(resp_data)
 
@@ -183,7 +244,7 @@ class GPUdb:
             return data_str
 
 
-    def read_datum(self, SCHEMA, encoded_datum):
+    def read_datum(self, SCHEMA, encoded_datum, encoding=None):
         """
         Decode a gaia_response and decode the contained message too.
 
@@ -205,7 +266,7 @@ class GPUdb:
             self.loaded_schemas["gaia_response"] = { "REP_SCHEMA_STR" : REP_SCHEMA_STR,
                                                      "REP_SCHEMA"     : REP_SCHEMA }
 
-        resp = self.read_orig_datum(REP_SCHEMA, encoded_datum)
+        resp = self.read_orig_datum(REP_SCHEMA, encoded_datum, encoding)
 
         #now parse the actual response if there is no error
         #NOTE: DATA_SCHEMA should be equivalent to SCHEMA but is NOT for get_set_sorted
@@ -218,9 +279,9 @@ class GPUdb:
             #DATA_SCHEMA = schema.parse(DATA_SCHEMA_STR)
             #out = read_orig_datum(DATA_SCHEMA, resp['data'])
             if self.encoding == 'JSON':
-                out = self.read_orig_datum(SCHEMA, resp['data_str'])
+                out = self.read_orig_datum(SCHEMA, resp['data_str'], 'JSON')
             elif self.encoding == 'BINARY':
-                out = self.read_orig_datum(SCHEMA, resp['data'])
+                out = self.read_orig_datum(SCHEMA, resp['data'], 'BINARY')
 
             #print 'read_orig_datum, size = ',len(resp['data'])
 
@@ -230,11 +291,11 @@ class GPUdb:
 
         return out
 
-    def read_point(self, encoded_datum):
+    def read_point(self, encoded_datum, encoding=None):
         if self.point_schema is None:
             self.point_schema = schema.parse(self.point_schema_str)
 
-        return self.read_orig_datum(self.point_schema, encoded_datum)
+        return self.read_orig_datum(self.point_schema, encoded_datum, encoding)
 
     def read_big_point(self, encoded_datum, encoding=None):
         if self.big_point_schema is None:
@@ -242,13 +303,13 @@ class GPUdb:
 
         return self.read_orig_datum(self.big_point_schema, encoded_datum, encoding)
 
-    def read_gis_point(self, encoded_datum):
+    def read_gis_point(self, encoded_datum, encoding=None):
         # this point is designed to look like "Point"
 
         if self.gis_point_schema is None:
             self.gis_point_schema = schema.parse(self.gis_point_schema_str)
 
-        return self.read_orig_datum(self.gis_point_schema, encoded_datum)
+        return self.read_orig_datum(self.gis_point_schema, encoded_datum, encoding)
 
     def get_schemas(self, base_name):
         """
@@ -295,7 +356,7 @@ class GPUdb:
         REP_SCHEMA_STR = open(gpudb_module_path+"/obj_defs/trigger_notification.json", "r").read()
         REP_SCHEMA = schema.parse(REP_SCHEMA_STR)
 
-        return self.read_orig_datum(REP_SCHEMA, encoded_datum, encoding='JSON')
+        return self.read_orig_datum(REP_SCHEMA, encoded_datum)
 
     # -----------------------------------------------------------------------
     # Endpoint calls
@@ -548,10 +609,11 @@ class GPUdb:
         (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("bulk_add")
 
         req_datum = collections.OrderedDict()
+        req_datum['set_id'] = set_id
         req_datum['list']     = objdatas if (self.encoding == 'BINARY') else ['']*len(objdatas)
         req_datum['list_str'] = objdatas if (self.encoding == 'JSON')   else ['']*len(objdatas)
         req_datum['list_encoding'] = self.encoding
-        req_datum['set_id'] = set_id
+        
 
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, req_datum, "/bulkadd")
 
@@ -624,6 +686,17 @@ class GPUdb:
         datum["authorization"] = authorization
 
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/clear")
+
+    # -----------------------------------------------------------------------
+    # clear_trigger -> /clear_trigger
+
+    def do_clear_trigger(self, trigger_id):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("clear_trigger")
+
+        datum = collections.OrderedDict()
+        datum["trigger_id"] = trigger_id
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/cleartrigger")
 
     # -----------------------------------------------------------------------
     # clear_auth_cache -> /clearauthcache
@@ -989,6 +1062,43 @@ class GPUdb:
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/getset")
 
     # -----------------------------------------------------------------------
+    # get_set_metdata -> /getsetmetadata
+
+    def do_get_set_metadata(self, set_ids):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("get_set_metadata")
+
+        datum = collections.OrderedDict()
+        datum["set_ids"] = set_ids
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/getsetmetadata")
+
+    # -----------------------------------------------------------------------
+    # get_set_objects -> /getsetobjects
+
+    def do_get_set_objects(self, set_id, start, end, encoding="binary", user_auth=""):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("get_set_objects")
+
+        datum = collections.OrderedDict()
+        datum["set_id"] = set_id
+        datum["start"] = start
+        datum["end"] = end
+        datum["encoding"] = encoding
+        datum["user_auth_string"] = user_auth
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/getsetobjects")
+
+    # -----------------------------------------------------------------------
+    # get_set_properties -> /getsetproperties
+
+    def do_get_set_properties(self, set_ids):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("get_set_properties")
+
+        datum = collections.OrderedDict()
+        datum["set_ids"] = set_ids
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/getsetproperties")
+
+    # -----------------------------------------------------------------------
     # get_set_sizes -> /getsetsizesc
 
     def do_get_set_sizes(self, set_ids):
@@ -1035,6 +1145,44 @@ class GPUdb:
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/gettracks")
 
     # -----------------------------------------------------------------------
+    # get_tracks2 -> /gettracks2
+
+    def do_get_tracks2(self, set_id, world_set_id, min_x, max_x, min_y, max_y, x_attr_name, y_attr_name, do_extent, start, end, user_auth=""):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("get_tracks2")
+
+        datum = collections.OrderedDict()
+        datum["set_id"] = set_id
+        datum["world_set_id"] = world_set_id
+        datum["min_x"] = min_x
+        datum["max_x"] = max_x
+        datum["min_y"] = min_y
+        datum["max_y"] = max_y
+        datum["x_attr_name"] = x_attr_name
+        datum["y_attr_name"] = y_attr_name
+        datum["do_extent"] = do_extent
+        datum["start"] = start
+        datum["end"] = end
+        datum["user_auth_string"] = user_auth
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/gettracks2")
+
+    # -----------------------------------------------------------------------
+    # get_get_sorted_set -> /getsortedset
+
+    def do_get_sorted_set(self, set_id, attribute, start, end, params = {}, user_auth=""):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("get_sorted_set")
+
+        datum = collections.OrderedDict()
+        datum["set_id"] = set_id
+        datum["attribute"] = attribute
+        datum["start"]  = start
+        datum["end"]    = end
+        datum["params"] = params;
+        datum["user_auth_string"] = user_auth
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/getsortedset")
+
+    # -----------------------------------------------------------------------
     # get_type_info -> /gettypeinfo
 
     def do_get_type_info(self, type_id, label, semantic_type):
@@ -1046,22 +1194,6 @@ class GPUdb:
         datum["semantic_type"] = semantic_type
 
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/gettypeinfo")
-
-    # -----------------------------------------------------------------------
-    # get_set_sorted -> /getsetsorted
-
-    def do_get_set_sorted(self, set_id, start, end, user_auth=""):
-        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("get_set_sorted")
-        # this call actually returns the get_set_response
-        (GS_REQ_SCHEMA,GS_REP_SCHEMA) = self.get_schemas("get_set")
-
-        datum = collections.OrderedDict()
-        datum["set_id"] = set_id
-        datum["start"] = start
-        datum["end"] = end
-        datum["user_auth_string"] = user_auth
-
-        return self.post_then_get(REQ_SCHEMA, GS_REP_SCHEMA, datum, "/getsetsorted")
 
     # -----------------------------------------------------------------------
     # get_sorted_sets -> /getsortedsets
@@ -1104,17 +1236,33 @@ class GPUdb:
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/groupbymappage")
 
     # -----------------------------------------------------------------------
+    # group_by_value -> /groupbyvalue
+
+    #group by value [attributes is a list]
+    def do_group_by_value(self, set_id, attributes, value_attribute = "", user_auth=""):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("group_by_value")
+
+        datum = collections.OrderedDict()
+        datum["set_id"] = set_id
+        datum["attributes"] = attributes
+        datum["value_attribute"] = value_attribute
+        datum["user_auth_string"] = user_auth
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/groupbyvalue")
+
+    # -----------------------------------------------------------------------
     # histogram -> /histogram
 
-    def do_histogram(self, set_id, attribute, interval, start, end, user_auth=""):
+    def do_histogram(self, set_id, attribute, interval, start, end, params={}, user_auth=""):
         (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("histogram")
 
         datum = collections.OrderedDict()
+        datum["set_id"] = set_id
         datum["attribute"] = attribute
+        datum["start"] = start
         datum["end"] = end
         datum["interval"] = interval
-        datum["set_id"] = set_id
-        datum["start"] = start
+        datum["params"] = params
         datum["user_auth_string"] = user_auth
 
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/histogram")
@@ -1502,7 +1650,7 @@ class GPUdb:
     # -----------------------------------------------------------------------
     # register_trigger_nai -> /registertriggernai
 
-    def do_register_trigger_nai(self, trigger_id, set_ids, xattr, xvals, yattr, yvals, id_attr):
+    def do_register_trigger_nai(self, trigger_id, set_ids, xattr, xvals, yattr, yvals):
         (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("register_trigger_nai")
 
         datum = collections.OrderedDict()
@@ -1512,14 +1660,13 @@ class GPUdb:
         datum["x_vector"] = xvals
         datum["y_attribute"] = yattr
         datum["y_vector"] = yvals
-        datum["id_attr"] = id_attr
 
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/registertriggernai")
 
     # -----------------------------------------------------------------------
     # register_trigger_range -> /registertriggerrange
 
-    def do_register_trigger_range(self, trigger_id, set_ids, attr, minval, maxval, id_attr):
+    def do_register_trigger_range(self, trigger_id, set_ids, attr, minval, maxval):
         (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("register_trigger_range")
 
         datum = collections.OrderedDict()
@@ -1528,9 +1675,19 @@ class GPUdb:
         datum["attr"] = attr
         datum["lowest"] = minval
         datum["highest"] = maxval
-        datum["id_attr"] = id_attr
 
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/registertriggerrange")
+
+    # -----------------------------------------------------------------------
+    # get_trigger_info -> /gettriggerinfo
+
+    def do_get_trigger_info(self, trigger_ids):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("get_trigger_info")
+
+        datum = collections.OrderedDict()
+        datum["trigger_ids"] = trigger_ids
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/gettriggerinfo")
 
     # -----------------------------------------------------------------------
     # register_type -> /registertype
@@ -1668,6 +1825,33 @@ class GPUdb:
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/select")
 
     # -----------------------------------------------------------------------
+    # select_delete -> /selectdelete
+
+    def do_select_delete(self, set_id, expression, user_auth=""):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("select_delete")
+
+        datum = collections.OrderedDict()
+        datum["set_id"] = set_id
+        datum["expression"] = expression
+        datum["user_auth_string"] = user_auth
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/selectdelete")
+
+    # -----------------------------------------------------------------------
+    # select_update -> /select_update
+
+    def do_select_update(self, set_id, expression, new_values_map, user_auth=""):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("select_update")
+
+        datum = collections.OrderedDict()
+        datum["set_id"] = set_id
+        datum["expression"] = expression
+        datum["new_values_map"] = new_values_map
+        datum["user_auth_string"] = user_auth
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/selectupdate")
+
+    # -----------------------------------------------------------------------
     # server_status -> /serverstatus
 
     def do_server_status(self, option=""):
@@ -1768,6 +1952,22 @@ class GPUdb:
 
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/spatialsetquery")
 
+   
+    # -----------------------------------------------------------------------
+    # statistics -> /statistics
+
+    def do_statistics(self, set_id, attribute, stats, params = {}, user_auth=""):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("statistics")
+
+        datum = collections.OrderedDict()
+        datum["stats"] = stats
+        datum["attribute"] = attribute
+        datum["set_id"] = set_id
+        datum["params"] = params;
+        datum["user_auth_string"] = user_auth
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/statistics")
+
     # -----------------------------------------------------------------------
     # stats -> /stats
 
@@ -1853,6 +2053,30 @@ class GPUdb:
         datum["user_auth_string"] = user_auth
 
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/updateobject")
+
+    # -----------------------------------------------------------------------
+    # update_set_metdata -> /updatesetmetadata
+
+    def do_update_set_metadata(self, set_ids, metadata_map):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("update_set_metadata")
+
+        datum = collections.OrderedDict()
+        datum["set_ids"] = set_ids
+        datum["metadata_map"] = metadata_map
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/updatesetmetadata")
+
+    # -----------------------------------------------------------------------
+    # update_set_properties -> /updatesetproperties
+
+    def do_update_set_properties(self, set_ids, properties_map):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("update_set_properties")
+
+        datum = collections.OrderedDict()
+        datum["set_ids"] = set_ids
+        datum["properties_map"] = properties_map
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/updatesetproperties")
 
     # -----------------------------------------------------------------------
     # update_set_ttl -> /updatesetttl
