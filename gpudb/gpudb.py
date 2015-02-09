@@ -10,6 +10,7 @@ import os, sys
 import json
 import uuid
 
+
 # The absolute path of this gpudb.py module for loading the obj_defs/*.json files.
 gpudb_module_path = __file__
 if gpudb_module_path[len(gpudb_module_path)-3:] == "pyc": # allow symlinks to gpudb.py
@@ -29,6 +30,14 @@ if sys.version_info >= (2, 7):
 else:
     import ordereddict as collections # a separate package
 
+have_snappy = False
+try:
+    import snappy
+    have_snappy = True
+except ImportError:
+    have_snappy = False
+
+
 # ---------------------------------------------------------------------------
 # GPUdb - Lightweight client class to interact with a GPUdb server.
 # ---------------------------------------------------------------------------
@@ -44,7 +53,7 @@ class GPUdb:
         Parameters:
             gpudb_ip    : The IP address of the GPUdb server.
             gpudb_port  : The port of the GPUdb server at the given IP address.
-            encoding   : Type of Avro encoding to use, "BINARY" or "JSON".
+            encoding   : Type of Avro encoding to use, "BINARY", "JSON" or "SNAPPY".
             connection : Connection type, currently only "HTTP" or "HTTPS" supported.
             username   : An optional http username.
             password   : The http password for the username.
@@ -97,8 +106,12 @@ class GPUdb:
 
         assert (len(gpudb_ip) > 0), "Expected a valid gpudb_ip address, got an empty string."
 
-        assert (encoding in ["BINARY", "JSON"]), "Expected encoding to be either 'BINARY' or 'JSON', got: '"+str(encoding)+"'"
+        assert (encoding in ["BINARY", "JSON", "SNAPPY"]), "Expected encoding to be either 'BINARY', 'JSON' or 'SNAPPY' got: '"+str(encoding)+"'"
         assert (connection in ["HTTP", "HTTPS"]), "Expected connection to be 'HTTP' or 'HTTPS', got: '"+str(connection)+"'"
+
+        if (encoding == 'SNAPPY' and not have_snappy):
+            print 'SNAPPY encoding specified but python-snappy is not installed; reverting to BINARY'
+            encoding = 'BINARY'
 
         self.gpudb_ip    = gpudb_ip
         self.gpudb_port  = int(gpudb_port)
@@ -158,6 +171,10 @@ class GPUdb:
         elif self.encoding == 'JSON':
             headers = {"Content-type": "application/json",
                        "Accept": "application/json"}
+        elif self.encoding == 'SNAPPY':
+            headers = {"Content-type": "application/x-snappy",
+                       "Accept": "application/x-snappy"}
+            body_data = snappy.compress(body_data)
 
         if len(self.username) != 0:
             # base64 encode the username and password
@@ -180,6 +197,7 @@ class GPUdb:
         #print "conn.request"
 
         resp = conn.getresponse()
+        #print resp.status,resp.reason
         resp_data = resp.read()
         #print("response size: %d"   % (len(resp_data)))
         #print("response     : '%s'" % (resp_data))
@@ -196,7 +214,7 @@ class GPUdb:
         """
 
         # build the encoder; this output is where the data will be written
-        if self.encoding == 'BINARY':
+        if self.encoding == 'BINARY' or self.encoding == 'SNAPPY':
             output = cStringIO.StringIO()
             be = io.BinaryEncoder(output)
 
@@ -227,11 +245,10 @@ class GPUdb:
             encoding      : Type of avro encoding, either "BINARY" or "JSON",
                             None uses the encoding this class was initialized with.
         """
-
         if encoding == None:
             encoding = self.encoding
 
-        if encoding == 'BINARY':
+        if (encoding == 'BINARY') or (encoding == 'SNAPPY'):
             output = cStringIO.StringIO(encoded_datum)
             bd = io.BinaryDecoder(output)
             reader = io.DatumReader(SCHEMA)
@@ -280,7 +297,7 @@ class GPUdb:
             #out = read_orig_datum(DATA_SCHEMA, resp['data'])
             if self.encoding == 'JSON':
                 out = self.read_orig_datum(SCHEMA, resp['data_str'], 'JSON')
-            elif self.encoding == 'BINARY':
+            elif (self.encoding == 'BINARY') or (self.encoding == 'SNAPPY'):
                 out = self.read_orig_datum(SCHEMA, resp['data'], 'BINARY')
 
             #print 'read_orig_datum, size = ',len(resp['data'])
@@ -365,15 +382,21 @@ class GPUdb:
     # -----------------------------------------------------------------------
     # add_object -> /add
 
-    def do_add(self,set_id,objdata):
+    def do_add(self,set_id,objdata,params={}):
         (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("add_object")
 
         req_datum = collections.OrderedDict()
 
-        req_datum['object_data']     = objdata if (self.encoding == 'BINARY') else ""
-        req_datum['object_data_str'] = objdata if (self.encoding == 'JSON')   else ""
-        req_datum['object_encoding'] = self.encoding
         req_datum['set_id'] = set_id
+        if (self.encoding == 'BINARY') or (self.encoding == 'SNAPPY'):
+            req_datum['object_data'] = objdata
+            req_datum['object_data_str'] = ""
+            req_datum['object_encoding'] = 'BINARY'
+        elif self.encoding == 'JSON':
+            req_datum['object_data'] = ""
+            req_datum['object_data_str'] = objdata
+            req_datum['object_encoding'] = 'JSON'
+        req_datum['params'] = params
 
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, req_datum, "/add")
 
@@ -396,15 +419,7 @@ class GPUdb:
         objdata = self.write_datum(self.big_point_schema, datum)
         #print "objdata", len(objdata)
 
-        # outer datum
-        req_datum = collections.OrderedDict()
-        req_datum['object_data']     = objdata if (self.encoding == 'BINARY') else ""
-        req_datum['object_data_str'] = objdata if (self.encoding == 'JSON')   else ""
-        req_datum['object_encoding'] = self.encoding
-        req_datum['set_id'] = set_id
-
-        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, req_datum, "/add")
-
+        return self.do_add(set_id, objdata)
 
     def do_add_bigger_point(self, set_id, artifact_id, x, y, timestamp, OBJECT_ID=''):
         if self.bigger_point_schema is None:
@@ -427,14 +442,7 @@ class GPUdb:
         objdata = self.write_datum(self.bigger_point_schema, datum)
         #print "objdata", len(objdata)
 
-        # outer datum
-        req_datum = collections.OrderedDict()
-        req_datum['object_data']     = objdata if (self.encoding == 'BINARY') else ""
-        req_datum['object_data_str'] = objdata if (self.encoding == 'JSON')   else ""
-        req_datum['object_encoding'] = self.encoding
-        req_datum['set_id'] = set_id
-
-        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, req_datum, "/add")
+        return self.do_add(set_id, objdata)
 
 
     def do_add_bytes_point(self, set_id, msg_id, x, y, timestamp, source, group_id, bytes_data, OBJECT_ID=''):
@@ -455,14 +463,7 @@ class GPUdb:
 
         objdata = self.write_datum(self.bytes_point_schema, datum)
 
-        # outer datum
-        req_datum = collections.OrderedDict()
-        req_datum['object_data']     = objdata if (self.encoding == 'BINARY') else ""
-        req_datum['object_data_str'] = objdata if (self.encoding == 'JSON')   else ""
-        req_datum['object_encoding'] = self.encoding
-        req_datum['set_id'] = set_id
-
-        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, req_datum, "/add")
+        return self.do_add(set_id, objdata)
 
 
     def do_add_gis_point(self, set_id, msg_id, x, y, timestamp, tag_id, derived, group_id,
@@ -489,14 +490,7 @@ class GPUdb:
 
         objdata = self.write_datum(self.gis_point_schema, datum)
 
-        # outer datum
-        req_datum = collections.OrderedDict()
-        req_datum['object_data']     = objdata if (self.encoding == 'BINARY') else ""
-        req_datum['object_data_str'] = objdata if (self.encoding == 'JSON')   else ""
-        req_datum['object_encoding'] = self.encoding
-        req_datum['set_id'] = set_id
-
-        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, req_datum, "/add")
+        return self.do_add(set_id, objdata)
 
 
     def do_add_point(self, set_id, x, y, OBJECT_ID=''):
@@ -512,14 +506,7 @@ class GPUdb:
 
         objdata = self.write_datum(self.point_schema, datum)
 
-        # outer datum
-        req_datum = collections.OrderedDict()
-        req_datum['object_data']     = objdata if (self.encoding == 'BINARY') else ""
-        req_datum['object_data_str'] = objdata if (self.encoding == 'JSON')   else ""
-        req_datum['object_encoding'] = self.encoding
-        req_datum['set_id'] = set_id
-
-        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, req_datum, "/add")
+        return self.do_add(set_id, objdata)
 
     # -----------------------------------------------------------------------
     # add_symbol -> /addsymbol
@@ -558,14 +545,7 @@ class GPUdb:
         objdata = self.write_datum(self.twitter_point_schema, datum)
         #print "objdata", len(objdata)
 
-        # outer datum
-        req_datum = collections.OrderedDict()
-        req_datum['object_data']     = objdata if (self.encoding == 'BINARY') else ""
-        req_datum['object_data_str'] = objdata if (self.encoding == 'JSON')   else ""
-        req_datum['object_encoding'] = self.encoding
-        req_datum['set_id'] = set_id
-
-        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, req_datum, "/add")
+        return self.do_add(set_id, objdata)
 
     # -----------------------------------------------------------------------
     # authenticate_users -> /authenticateusers
@@ -605,15 +585,21 @@ class GPUdb:
     # bulk_add -> /bulkadd
 
     # generic version
-    def do_bulk_add(self, set_id, objdatas):
+    def do_bulk_add(self, set_id, objdatas, params={}):
         (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("bulk_add")
 
         req_datum = collections.OrderedDict()
+
         req_datum['set_id'] = set_id
-        req_datum['list']     = objdatas if (self.encoding == 'BINARY') else ['']*len(objdatas)
-        req_datum['list_str'] = objdatas if (self.encoding == 'JSON')   else ['']*len(objdatas)
-        req_datum['list_encoding'] = self.encoding
-        
+        if (self.encoding == 'BINARY') or (self.encoding == 'SNAPPY'):
+            req_datum['list'] = objdatas
+            req_datum['list_str'] = ['']*len(objdatas)
+            req_datum['list_encoding'] = 'BINARY'
+        elif self.encoding == 'JSON':
+            req_datum['list'] = ['']*len(objdatas)
+            req_datum['list_str'] = objdatas
+            req_datum['list_encoding'] = 'JSON'   
+        req_datum['params'] = params
 
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, req_datum, "/bulkadd")
 
@@ -621,8 +607,6 @@ class GPUdb:
     def do_bulk_add_big_point(self, set_id, msg_id_list, x_list, y_list, timestamp_list, source_list, group_id_list, OBJECT_ID_list=None):
         if self.big_point_schema is None:
             self.big_point_schema = schema.parse(self.big_point_schema_str)
-
-        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("bulk_add")
 
         if (OBJECT_ID_list is None):
             OBJECT_ID_list = ['' for x in x_list]
@@ -640,20 +624,12 @@ class GPUdb:
             datum['OBJECT_ID'] = object_id
             obj_list_encoded.append(self.write_datum(self.big_point_schema, datum))
 
-        req_datum = collections.OrderedDict()
-        req_datum["set_id"] = set_id
-        req_datum['list']     = obj_list_encoded if (self.encoding == 'BINARY') else ['']*len(x_list)
-        req_datum['list_str'] = obj_list_encoded if (self.encoding == 'JSON')   else ['']*len(x_list)
-        req_datum["list_encoding"] = self.encoding
-
-        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, req_datum, "/bulkadd")
+        return self.do_bulk_add(set_id, obj_list_encoded)
 
     # This assumes that 'x' and 'y' are equal length lists
     def do_bulk_add_point(self, set_id, x_list, y_list, OBJECT_ID_list=None):
         if self.point_schema is None:
             self.point_schema = schema.parse(self.point_schema_str)
-
-        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("bulk_add")
 
         if (OBJECT_ID_list is None):
             OBJECT_ID_list = ['' for x in x_list]
@@ -667,13 +643,75 @@ class GPUdb:
             datum['OBJECT_ID'] = OBJECT_ID_list[i]
             obj_list_encoded.append(self.write_datum(self.point_schema, datum))
 
-        req_datum = collections.OrderedDict()
-        req_datum["set_id"] = set_id
-        req_datum['list']     = obj_list_encoded if (self.encoding == 'BINARY') else ['']*len(x_list)
-        req_datum['list_str'] = obj_list_encoded if (self.encoding == 'JSON')   else ['']*len(x_list)
-        req_datum["list_encoding"] = self.encoding
+        return self.do_bulk_add(set_id, obj_list_encoded)
 
-        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, req_datum, "/bulkadd")
+    # -----------------------------------------------------------------------
+    # bulk_delete -> /bulkdelete
+
+    def do_bulk_delete(self, set_id, global_expression, expressions, params = {}, user_auth=""):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("bulk_delete")
+
+        datum = collections.OrderedDict()
+        datum["set_id"] = set_id
+        datum["global_expression"] = global_expression
+        datum["expressions"] = expressions
+        datum["params"] = params
+        datum["user_auth_string"] = user_auth
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/bulkdelete")
+
+    # -----------------------------------------------------------------------
+    # bulk_select -> /bulkselect
+
+    def do_bulk_select(self, set_id, global_expression, expressions, params = {}, user_auth=""):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("bulk_select")
+
+        datum = collections.OrderedDict()
+        datum["set_id"] = set_id
+        datum["global_expression"] = global_expression
+        datum["expressions"] = expressions
+        datum["params"] = params
+        datum["user_auth_string"] = user_auth
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/bulkselect")
+
+    # -----------------------------------------------------------------------
+    # bulk_selectvalues -> /bulkselectvalues
+
+    def do_bulk_select_values(self, set_id, attributes, global_expression, expressions, params = {}, user_auth=""):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("bulk_select_values")
+
+        datum = collections.OrderedDict()
+        datum["set_id"] = set_id
+        datum["attributes"] = attributes
+        datum["global_expression"] = global_expression
+        datum["expressions"] = expressions
+        datum["params"] = params
+        datum["user_auth_string"] = user_auth
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/bulkselectvalues")
+
+    # -----------------------------------------------------------------------
+    # bulk_update -> /bulkupdate
+
+    def do_bulk_update(self, set_id, global_expression, expressions, new_values_map, objects_to_insert = [], 
+                       objects_to_insert_str = [], object_encoding = 'BINARY', params = {}, user_auth=""):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("bulk_update")
+
+        datum = collections.OrderedDict()
+        datum["set_id"] = set_id
+        datum["global_expression"] = global_expression
+        datum["expressions"] = expressions
+        datum["new_values_maps"] = new_values_map
+        datum["objects_to_insert"] = objects_to_insert
+        datum["objects_to_insert_str"] = objects_to_insert_str
+        datum["object_encoding"] = object_encoding
+        datum["params"] = params
+        datum["user_auth_string"] = user_auth
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/bulkupdate")
+
+    # -----------------------------------------------------------------------
 
     # -----------------------------------------------------------------------
     # clear -> /clear
@@ -709,24 +747,6 @@ class GPUdb:
         datum["user_auth_string"] = user_auth
 
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/clearauthcache")
-
-    # -----------------------------------------------------------------------
-    # cluster -> /cluster
-
-    def do_cluster(self, world_set, subworld_set, result_set, shared_attribute, cluster_attribute, user_auth=""):
-        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("cluster")
-
-        datum = collections.OrderedDict()
-        datum["cluster_attribute"] = cluster_attribute
-        datum["first_pass"] = True
-        datum["list"] = []
-        datum["result_set"] = result_set
-        datum["shared_attribute"] = shared_attribute
-        datum["subworld_set"] = subworld_set
-        datum["world_set"] = world_set
-        datum["user_auth_string"] = user_auth
-
-        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/cluster")
 
     # -----------------------------------------------------------------------
     # convex_hull -> /convexhull
@@ -887,6 +907,43 @@ class GPUdb:
         datum["user_auth_string"] = user_auth
 
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/filterbystring")
+
+    # -----------------------------------------------------------------------
+    # filter_by_track -> /filterbytrack
+
+    # filter by track; return a count of how many points are with a spatio-temporal radius of a given track
+    def do_filter_by_track(self, set_id, track_id, target_track_ids, params, result_set_id, user_auth=""):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("filter_by_track")
+
+        datum = collections.OrderedDict()
+        datum["set_id"] = set_id
+        datum["track_id"] = track_id
+        datum["target_track_ids"] = target_track_ids
+        datum["params"] = params
+        datum["result_set_id"] = result_set_id
+        datum["user_auth_string"] = user_auth
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/filterbytrack")
+
+    # -----------------------------------------------------------------------
+    # filter_by_track_values -> /filterbytrackvalues
+
+    # filter by track values; return a count of how many points are with a spatio-temporal radius of a given track
+    def do_filter_by_track_values(self, set_id, x_vals, y_vals, t_vals, track_ids_to_ignore, target_track_ids, params, result_set_id, user_auth=""):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("filter_by_track_values")
+
+        datum = collections.OrderedDict()
+        datum["set_id"] = set_id
+        datum["x_vals"] = x_vals
+        datum["y_vals"] = y_vals
+        datum["t_vals"] = t_vals
+        datum["track_ids_to_ignore"] = track_ids_to_ignore
+        datum["target_track_ids"] = target_track_ids
+        datum["params"] = params
+        datum["result_set_id"] = result_set_id
+        datum["user_auth_string"] = user_auth
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/filterbytrackvalues")
 
     # -----------------------------------------------------------------------
     # filter_by_value -> /filterbyvalue
@@ -1088,6 +1145,22 @@ class GPUdb:
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/getsetobjects")
 
     # -----------------------------------------------------------------------
+    # get_set_objects -> /getvalues
+
+    def do_get_values(self, set_id, attributes, start, end, params = {}, user_auth=""):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("get_values")
+
+        datum = collections.OrderedDict()
+        datum["set_id"] = set_id
+        datum["attributes"] = attributes
+        datum["start"] = start
+        datum["end"] = end
+        datum["params"] = params;
+        datum["user_auth_string"] = user_auth
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/getvalues")
+
+    # -----------------------------------------------------------------------
     # get_set_properties -> /getsetproperties
 
     def do_get_set_properties(self, set_ids):
@@ -1169,7 +1242,7 @@ class GPUdb:
     # -----------------------------------------------------------------------
     # get_get_sorted_set -> /getsortedset
 
-    def do_get_sorted_set(self, set_id, attribute, start, end, params = {}, user_auth=""):
+    def do_get_sorted_set(self, set_id, attribute, start, end, encoding="binary", params = {}, user_auth=""):
         (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("get_sorted_set")
 
         datum = collections.OrderedDict()
@@ -1177,6 +1250,7 @@ class GPUdb:
         datum["attribute"] = attribute
         datum["start"]  = start
         datum["end"]    = end
+        datum["encoding"] = encoding;
         datum["params"] = params;
         datum["user_auth_string"] = user_auth
 
@@ -1223,19 +1297,6 @@ class GPUdb:
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/groupby")
 
     # -----------------------------------------------------------------------
-    # group_by_map_page -> /groupbymappage
-
-    def do_group_by_map_page(self, map_id, page_number, user_auth=""):
-        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("group_by_map_page")
-
-        datum = collections.OrderedDict()
-        datum["user_auth_string"] = user_auth
-        datum["map_id"] = map_id
-        datum["page_number"] = page_number
-
-        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/groupbymappage")
-
-    # -----------------------------------------------------------------------
     # group_by_value -> /groupbyvalue
 
     #group by value [attributes is a list]
@@ -1266,22 +1327,6 @@ class GPUdb:
         datum["user_auth_string"] = user_auth
 
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/histogram")
-
-    # -----------------------------------------------------------------------
-    # initialize_group_by_map -> /initializegroupbymap
-
-    def do_initialize_group_by_map(self, set_id, attribute, map_id, page_size, user_auth=""):
-        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("initialize_group_by_map")
-
-        datum = collections.OrderedDict()
-        datum["user_auth_string"] = user_auth
-        datum["set_id"] = set_id
-        datum["attribute"] = attribute
-        datum["map_id"] = map_id
-        datum["page_size"] = page_size
-        datum["group_by_map"] = collections.OrderedDict() #this is set by the TW
-
-        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/initializegroupbymap")
 
     # -----------------------------------------------------------------------
     # join -> /join
@@ -1422,9 +1467,9 @@ class GPUdb:
     # -----------------------------------------------------------------------
     # plot2d_heatmap_cb -> /plot2dheatmapcb - class break
 
-    def do_plot2d_heatmap_cb(self, min_x, max_x, min_y, max_y, x_attr_name, y_attr_name, width, height, projection, bg_color,
+    def do_plot2d_heatmap_cb(self, min_x, max_x, min_y, max_y, x_attr_name, y_attr_name, width, height, projection,
                              set_ids, cb_attr, cb_vals, cb_ranges,
-                             colormaps, blur_radii,  gradient_start_colors, gradient_end_colors, user_auth=""):
+                             colormaps, blur_radii, bg_color, gradient_start_colors, gradient_end_colors, user_auth=""):
         (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("plot2d_heatmap_cb")
 
         datum = collections.OrderedDict()
@@ -1449,30 +1494,6 @@ class GPUdb:
         datum["user_auth_string"] = user_auth
 
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/plot2dheatmapcb")
-
-    # -----------------------------------------------------------------------
-    # plot2d_multiple -> /plot2dmultiple
-
-    def do_plot2d_multiple(self, set_ids, colors, sizes, min_x, max_x, min_y, max_y, x_attr_name, y_attr_name, width, height, projection, bg_color, user_auth=""):
-        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("plot2d_multiple")
-
-        datum = collections.OrderedDict()
-        datum["min_x"] = min_x
-        datum["max_x"] = max_x
-        datum["min_y"] = min_y
-        datum["max_y"] = max_y
-        datum["x_attr_name"] = x_attr_name
-        datum["y_attr_name"] = y_attr_name
-        datum["width"] = width
-        datum["height"] = height
-        datum["projection"] = projection
-        datum["set_ids"] = set_ids
-        datum["colors"] = colors
-        datum["sizes"] = sizes
-        datum["bg_color"] = bg_color
-        datum["user_auth_string"] = user_auth
-
-        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/plot2dmultiple")
 
     # -----------------------------------------------------------------------
     # plot2d_multiple_2 -> /plot2dmultiple2
@@ -1535,7 +1556,7 @@ class GPUdb:
                               set_ids, world_set_ids, track_ids,
                               cb_attr1, cb_vals1,
                               cb_attr2, cb_vals2,
-                              do_points, do_shapes, do_tracks,
+                              do_points, do_shapes, do_tracks, do_symbology,
                               pointcolors, pointsizes, pointshapes,
                               shapelinewidths, shapelinecolors, shapefillcolors,
                               tracklinewidths, tracklinecolors,
@@ -1568,6 +1589,7 @@ class GPUdb:
         datum["do_points"] = do_points
         datum["do_shapes"] = do_shapes
         datum["do_tracks"] = do_tracks
+        datum["do_symbology"] = do_symbology
 
         datum["pointcolors"] = pointcolors
         datum["pointsizes"] = pointsizes
@@ -1625,7 +1647,7 @@ class GPUdb:
     # -----------------------------------------------------------------------
     # random -> /random
 
-    def do_random(self, set_id, count, param_map):
+    def do_random(self, set_id, count, param_map={}):
         (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("random")
 
         datum = collections.OrderedDict()
@@ -1863,6 +1885,17 @@ class GPUdb:
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/serverstatus")
 
     # -----------------------------------------------------------------------
+    # server_timing -> /servertiming
+
+    def do_server_timing(self, option=""):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("server_timing")
+
+        datum = collections.OrderedDict()
+        datum["option"] = option
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/servertiming")
+
+    # -----------------------------------------------------------------------
     # set_info -> /setinfo
 
     def do_set_info(self, set_id):
@@ -1872,43 +1905,6 @@ class GPUdb:
         datum["set_ids"] = [set_id]
 
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/setinfo")
-
-    # -----------------------------------------------------------------------
-    # shape_intersection -> /shapeintersection
-
-    def do_shape_intersection(self, set_ids, wkt_attr_name, x_vector, y_vector, geometry_type, wkt_string, user_auth=""):
-        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("shape_intersection")
-
-        datum = collections.OrderedDict()
-        datum["set_ids"] = set_ids
-        datum["wkt_attr_name"] = wkt_attr_name
-        datum["x_vector"] = x_vector
-        datum["y_vector"] = y_vector
-        datum["geometry_type"] = geometry_type
-        datum["wkt_string"] = wkt_string
-        datum["user_auth_string"] = user_auth
-
-        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/shapeintersection")
-
-    # -----------------------------------------------------------------------
-    # shape_literal_intersection -> /shapeliteralintersection
-
-    def do_shape_literal_intersection(self, x_vector_1, y_vector_1, geometry_type_1, wkt_string_1, x_vector_2, y_vector_2, geometry_type_2, wkt_string_2):
-        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("shape_literal_intersection")
-
-        datum = collections.OrderedDict()
-
-        datum["x_vector_1"] = x_vector_1
-        datum["y_vector_1"] = y_vector_1
-        datum["geometry_type_1"] = geometry_type_1
-        datum["wkt_string_1"] = wkt_string_1
-
-        datum["x_vector_2"] = x_vector_2
-        datum["y_vector_2"] = y_vector_2
-        datum["geometry_type_2"] = geometry_type_2
-        datum["wkt_string_2"] = wkt_string_2
-
-        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/shapeliteralintersection")
 
     # -----------------------------------------------------------------------
     # sort -> /sort
@@ -1969,6 +1965,42 @@ class GPUdb:
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/statistics")
 
     # -----------------------------------------------------------------------
+    # ranged_statistics -> /rangedstatistics
+
+    def do_ranged_statistics(self, set_id, attribute, value_attribute, stats, interval, start, end, select_expression = "", params = {}, user_auth=""):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("ranged_statistics")
+
+        datum = collections.OrderedDict()
+        datum["set_id"] = set_id
+        datum["attribute"] = attribute
+        datum["value_attribute"] = value_attribute
+        datum["stats"] = stats
+        datum["start"] = start
+        datum["end"] = end
+        datum["interval"] = interval
+        datum["select_expression"] = select_expression
+        datum["params"] = params;
+        datum["user_auth_string"] = user_auth
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/rangedstatistics")
+
+    # -----------------------------------------------------------------------
+    # kmeans -> /kmeans
+
+    def do_k_means(self, set_id, k, attributes, tolerance, params = {}, user_auth=""):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("k_means")
+
+        datum = collections.OrderedDict()
+        datum["set_id"] = set_id
+        datum["attributes"] = attributes
+        datum["k"] = k
+        datum["tolerance"] = tolerance
+        datum["params"] = params;
+        datum["user_auth_string"] = user_auth
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/kmeans")
+
+    # -----------------------------------------------------------------------
     # stats -> /stats
 
     def do_stats(self, set_id=""):
@@ -2008,23 +2040,6 @@ class GPUdb:
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/storegroupby")
 
     # -----------------------------------------------------------------------
-    # turn_off -> /turnoff
-
-    def do_turn_off(self, set_ids, group_attribute, sort_attribute, x_attribute, y_attribute, threshold, user_auth=""):
-        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("turn_off")
-
-        datum = collections.OrderedDict()
-        datum["set_ids"] = set_ids
-        datum["group_attribute"] = group_attribute
-        datum["sort_attribute"] = sort_attribute
-        datum["x_attribute"] = x_attribute
-        datum["y_attribute"] = y_attribute
-        datum["threshold"] = threshold
-        datum["user_auth_string"] = user_auth
-
-        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/turnoff")
-
-    # -----------------------------------------------------------------------
     # unique -> /unique
 
     def do_unique(self, set_id, attribute, user_auth=""):
@@ -2047,7 +2062,7 @@ class GPUdb:
 
         datum["set_ids"] = set_ids
         datum["OBJECT_ID"] = OBJECT_ID
-        datum['object_data'] = objdata if (self.encoding == 'BINARY') else ""
+        datum['object_data'] = objdata if (self.encoding == 'BINARY' or self.encoding == 'SNAPPY') else ""
         datum['object_data_str'] = objdata if (self.encoding == 'JSON') else ""
         datum['object_encoding'] = self.encoding
         datum["user_auth_string"] = user_auth
