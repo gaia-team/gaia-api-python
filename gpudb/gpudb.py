@@ -196,11 +196,26 @@ class GPUdb:
         conn.request("POST", endpoint, body_data, headers)
         #print "conn.request"
 
-        resp = conn.getresponse()
-        #print resp.status,resp.reason
-        resp_data = resp.read()
-        #print("response size: %d"   % (len(resp_data)))
-        #print("response     : '%s'" % (resp_data))
+        try:
+            resp = conn.getresponse()
+            resp_data = resp.read()
+        except: # some error occurred; return a message
+            error_resp = collections.OrderedDict()
+            error_resp["status"] = "ERROR"
+            error_resp["message"] = "Timeout Error: No response received from %s" % self.gpudb_ip
+            error_resp["data_type"] = "none"
+            error_resp["data"] = ""
+            error_resp["data_str"] = ""
+            gpudb_resp_schema = self.loaded_schemas["gaia_response"]["REP_SCHEMA"]
+            encoded_error_resp = self.write_datum( gpudb_resp_schema, error_resp )
+            return encoded_error_resp
+        # end except
+
+        # resp = conn.getresponse()
+        # #Print resp.status,resp.reason
+        # resp_data = resp.read() # TODO: comment this out
+        # #print("response size: %d"   % (len(resp_data)))
+        # #print("response     : '%s'" % (resp_data))
 
         return  str(resp_data)
 
@@ -792,6 +807,17 @@ class GPUdb:
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/deleteobject")
 
     # -----------------------------------------------------------------------
+    # execute -> /execute
+
+    def do_execute(self, statement):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("execute")
+
+        datum = collections.OrderedDict()
+        datum["statement"] = statement
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/execute")
+
+    # -----------------------------------------------------------------------
     # exit -> /exit
 
     def do_exit(self, exit_type, authorization):
@@ -1300,13 +1326,14 @@ class GPUdb:
     # group_by_value -> /groupbyvalue
 
     #group by value [attributes is a list]
-    def do_group_by_value(self, set_id, attributes, value_attribute = "", user_auth=""):
+    def do_group_by_value(self, set_id, attributes, value_attribute = "", params = {}, user_auth=""):
         (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("group_by_value")
 
         datum = collections.OrderedDict()
         datum["set_id"] = set_id
         datum["attributes"] = attributes
         datum["value_attribute"] = value_attribute
+        datum["params"] = params
         datum["user_auth_string"] = user_auth
 
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/groupbyvalue")
@@ -1327,6 +1354,20 @@ class GPUdb:
         datum["user_auth_string"] = user_auth
 
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/histogram")
+
+    # -----------------------------------------------------------------------
+    # index -> /index
+
+    def do_index(self, set_id, attribute, action, params={}):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("index")
+
+        datum = collections.OrderedDict()
+        datum["set_id"] = set_id
+        datum["attribute"] = attribute
+        datum["action"] = action
+        datum["params"] = params
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/index")
 
     # -----------------------------------------------------------------------
     # join -> /join
@@ -2042,12 +2083,13 @@ class GPUdb:
     # -----------------------------------------------------------------------
     # unique -> /unique
 
-    def do_unique(self, set_id, attribute, user_auth=""):
+    def do_unique(self, set_id, attribute, params = {}, user_auth=""):
         (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("unique")
 
         datum = collections.OrderedDict()
         datum["set_id"] = set_id
         datum["attribute"] = attribute
+        datum["params"] = params
         datum["user_auth_string"] = user_auth
 
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/unique")
