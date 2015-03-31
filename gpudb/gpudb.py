@@ -10,7 +10,7 @@ import os, sys
 import json
 import uuid
 
-
+# ---------------------------------------------------------------------------
 # The absolute path of this gpudb.py module for loading the obj_defs/*.json files.
 gpudb_module_path = __file__
 if gpudb_module_path[len(gpudb_module_path)-3:] == "pyc": # allow symlinks to gpudb.py
@@ -22,6 +22,13 @@ gpudb_module_path = os.path.dirname(os.path.abspath(gpudb_module_path))
 # Search for our modules first, probably don't need imp or virt envs.
 if not gpudb_module_path + "/packages" in sys.path :
     sys.path.insert(1, gpudb_module_path + "/packages")
+
+# Find the path to the obj_defs/*_{request/response}.json files.
+gpudb_obj_defs_path = gpudb_module_path+"/obj_defs"
+assert(os.path.exists(gpudb_obj_defs_path)), "Error locating path to obj_defs, tried '%s'" % gpudb_obj_defs_path
+
+# ---------------------------------------------------------------------------
+# Local imports after adding our module search path
 
 from avro import schema, datafile, io
 
@@ -62,7 +69,7 @@ class GPUdb:
         assert (type(gpudb_ip) is str), "Expected a string gpudb_ip address, got: '"+str(gpudb_ip)+"'"
 
         # gpudb_ip may take the form of :
-        #  - "https://user:password@domain.com/path/"
+        #  - "https://user:password@domain.com:port/path/"
 
         if gpudb_ip.startswith("http://") :    # Allow http://, but remove it.
             gpudb_ip = gpudb_ip[7:]
@@ -80,32 +87,36 @@ class GPUdb:
             if len(user_pass_list) > 1 :
                 password = user_pass_list[1]
 
-        # Allow gpudb_ip include the port, "127.0.0.1:9191", only if port is empty.
-        if (gpudb_port == "") or (gpudb_port == None):
-            # Port does not have to be provided if using proxy on port 80.
-            gpudb_ip_port_pos = gpudb_ip.rfind(':')
-            if gpudb_ip_port_pos != -1 :
-                gpudb_port = gpudb_ip[gpudb_ip_port_pos+1:]
+        url_path = ""
+        # Find the URL /path/ and remove it to get the ip address.
+        gpudb_ip_path_pos = gpudb_ip.find('/')
+        if gpudb_ip_path_pos != -1:
+            url_path = gpudb_ip[gpudb_ip_path_pos:]
+            if url_path[-1] == '/':
+                url_path = url_path[:-1]
+            gpudb_ip = gpudb_ip[:gpudb_ip_path_pos]
 
-            # Set the port to what we'll use, only for informational purposes.
-            if len(gpudb_port) == 0:
-                if connection == 'HTTP' :
-                    gpudb_port = 80
-                elif connection == 'HTTPS' :
-                    gpudb_port = 443
-        else:
-            # Validate gpudb_port and assemble gpudb_ip
-            try :
-                port = int(gpudb_port)
-            except :
-                assert False, "Expected a numeric gpudb_port, got: '" + str(gpudb_port) + "'"
+        # Override default port if specified in ip address
+        gpudb_ip_port_pos = gpudb_ip.find(':')
+        if gpudb_ip_port_pos != -1 :
+            gpudb_port = gpudb_ip[gpudb_ip_port_pos+1:]
+            gpudb_ip = gpudb_ip[:gpudb_ip_port_pos]
 
-            assert (port > 0) and (port < 65536), "Expected a valid gpudb_port (1-65535), got: '"+str(gpudb_port)+"'"
+        # Port does not have to be provided if using standard HTTP(S) ports.
+        if (gpudb_port == None) or len(str(gpudb_port)) == 0:
+            if connection == 'HTTP' :
+                gpudb_port = 80
+            elif connection == 'HTTPS' :
+                gpudb_port = 443
 
-            gpudb_ip += ":" + str(gpudb_port)
+        # Validate gpudb_port
+        try :
+            port = int(gpudb_port)
+        except :
+            assert False, "Expected a numeric gpudb_port, got: '" + str(gpudb_port) + "'"
 
+        assert (port > 0) and (port < 65536), "Expected a valid gpudb_port (1-65535), got: '"+str(gpudb_port)+"'"
         assert (len(gpudb_ip) > 0), "Expected a valid gpudb_ip address, got an empty string."
-
         assert (encoding in ["BINARY", "JSON", "SNAPPY"]), "Expected encoding to be either 'BINARY', 'JSON' or 'SNAPPY' got: '"+str(encoding)+"'"
         assert (connection in ["HTTP", "HTTPS"]), "Expected connection to be 'HTTP' or 'HTTPS', got: '"+str(connection)+"'"
 
@@ -113,23 +124,25 @@ class GPUdb:
             print 'SNAPPY encoding specified but python-snappy is not installed; reverting to BINARY'
             encoding = 'BINARY'
 
-        self.gpudb_ip    = gpudb_ip
-        self.gpudb_port  = int(gpudb_port)
-        self.encoding   = encoding
-        self.connection = connection
-        self.username   = username
-        self.password   = password
-        
-        #print("GPUdb ip: '%s', port: %d, encoding: '%s', connection: '%s', username: '%s', password: '%s'" %
-        #      (self.gpudb_ip, self.gpudb_port, self.encoding, self.connection, self.username, self.password))
+        self.gpudb_ip       = gpudb_ip
+        self.gpudb_url_path = url_path
+        self.gpudb_port     = int(gpudb_port)
+        self.encoding      = encoding
+        self.connection    = connection
+        self.username      = username
+        self.password      = password
+
+        #print("GPUdb ip: '%s', port: %d, path '%s', encoding: '%s', connection: '%s', username: '%s', password: '%s'" %
+        #      (self.gpudb_ip, self.gpudb_port, self.gpudb_url_path, self.encoding, self.connection, self.username, self.password))
 
     # members
-    gpudb_ip    = "127.0.0.1" # Input gpudb_ip with gpudb_port appended if provided.
-    gpudb_port  = "9191"      # Input gpudb_port, may be empty.
-    encoding   = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
-    connection = "HTTP"      # Input connection type, either 'HTTP' or 'HTTPS'.
-    username   = ""          # Input username or empty string for none.
-    password   = ""          # Input password or empty string for none.
+    gpudb_ip       = "127.0.0.1" # Input gpudb_ip with gpudb_port appended if provided.
+    gpudb_url_path = ""          # Input /path (if any) that was in the gpudb_ip.
+    gpudb_port     = "9191"      # Input gpudb_port, may be empty.
+    encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
+    connection    = "HTTP"      # Input connection type, either 'HTTP' or 'HTTPS'.
+    username      = ""          # Input username or empty string for none.
+    password      = ""          # Input password or empty string for none.
 
     # constants
     END_OF_SET = -9999
@@ -185,16 +198,22 @@ class GPUdb:
         #       fast as reusing a persistent one and has the advantage of
         #       fully retrying from scratch if the connection fails.
 
-        if (self.connection == 'HTTP'):
-            conn = httplib.HTTPConnection(self.gpudb_ip)
-        elif (self.connection == 'HTTPS'):
-            conn = httplib.HTTPSConnection(self.gpudb_ip)
-        else:
-             assert False, "Unknown connection type, should be 'HTTP' or 'HTTPS'"
+        try:
+            if (self.connection == 'HTTP'):
+                conn = httplib.HTTPConnection(host=self.gpudb_ip, port=self.gpudb_port)
+            elif (self.connection == 'HTTPS'):
+                conn = httplib.HTTPSConnection(host=self.gpudb_ip, port=self.gpudb_port)
+            else:
+                assert False, "Unknown connection type, should be 'HTTP' or 'HTTPS'"
+        except:
+            print("Error connecting to: '%s' on port %d" % (self.gpudb_ip, self.gpudb_port))
+            raise
 
-        #print nurl
-        conn.request("POST", endpoint, body_data, headers)
-        #print "conn.request"
+        try:
+            conn.request("POST", self.gpudb_url_path+endpoint, body_data, headers)
+        except:
+            print("Error posting to: '%s:%d%s'" % (self.gpudb_ip, self.gpudb_port, self.gpudb_url_path+endpoint))
+            raise
 
         try:
             resp = conn.getresponse()
@@ -292,7 +311,7 @@ class GPUdb:
         if "gaia_response" in self.loaded_schemas:
             REP_SCHEMA = self.loaded_schemas["gaia_response"]["REP_SCHEMA"]
         else:
-            REP_SCHEMA_STR = open(gpudb_module_path+"/obj_defs/gaia_response.json","r").read()
+            REP_SCHEMA_STR = open(gpudb_obj_defs_path+"/gaia_response.json","r").read()
             REP_SCHEMA     = schema.parse(REP_SCHEMA_STR)
 
             self.loaded_schemas["gaia_response"] = { "REP_SCHEMA_STR" : REP_SCHEMA_STR,
@@ -307,7 +326,7 @@ class GPUdb:
         if stype == 'none':
             out = collections.OrderedDict()
         else:
-            #DATA_SCHEMA_STR = open(gpudb_module_path+"/obj_defs/%s.json"%(stype), "r").read()
+            #DATA_SCHEMA_STR = open(gpudb_obj_defs_path+"/%s.json"%(stype), "r").read()
             #DATA_SCHEMA = schema.parse(DATA_SCHEMA_STR)
             #out = read_orig_datum(DATA_SCHEMA, resp['data'])
             if self.encoding == 'JSON':
@@ -355,8 +374,8 @@ class GPUdb:
             REQ_SCHEMA = self.loaded_schemas[base_name]["REQ_SCHEMA"]
             REP_SCHEMA = self.loaded_schemas[base_name]["REP_SCHEMA"]
         else:
-            REP_SCHEMA_STR = open(gpudb_module_path+"/obj_defs/"+base_name+"_response.json", "r").read()
-            REQ_SCHEMA_STR = open(gpudb_module_path+"/obj_defs/"+base_name+"_request.json",  "r").read()
+            REP_SCHEMA_STR = open(gpudb_obj_defs_path+"/"+base_name+"_response.json", "r").read()
+            REQ_SCHEMA_STR = open(gpudb_obj_defs_path+"/"+base_name+"_request.json",  "r").read()
             REP_SCHEMA     = schema.parse(REP_SCHEMA_STR)
             REQ_SCHEMA     = schema.parse(REQ_SCHEMA_STR)
 
@@ -385,7 +404,7 @@ class GPUdb:
 
 
     def do_read_trigger_msg(self, encoded_datum):
-        REP_SCHEMA_STR = open(gpudb_module_path+"/obj_defs/trigger_notification.json", "r").read()
+        REP_SCHEMA_STR = open(gpudb_obj_defs_path+"/trigger_notification.json", "r").read()
         REP_SCHEMA = schema.parse(REP_SCHEMA_STR)
 
         return self.read_orig_datum(REP_SCHEMA, encoded_datum)
@@ -1541,7 +1560,7 @@ class GPUdb:
 
     def do_plot2d_multiple_2(self, min_x, max_x, min_y, max_y, x_attr_name, y_attr_name, width, height, projection, bg_color,
                              set_ids, world_set_ids, track_ids,
-                             do_points, do_shapes, do_tracks,
+                             do_points, do_shapes, do_tracks, do_symbology,
                              pointcolors, pointsizes, pointshapes,
                              shapelinewidths, shapelinecolors, shapefillcolors,
                              tracklinewidths, tracklinecolors,
@@ -1568,6 +1587,7 @@ class GPUdb:
         datum["do_points"] = do_points
         datum["do_shapes"] = do_shapes
         datum["do_tracks"] = do_tracks
+        datum["do_symbology"] = do_symbology
 
         datum["pointcolors"] = pointcolors
         datum["pointsizes"] = pointsizes
@@ -1989,7 +2009,6 @@ class GPUdb:
 
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/spatialsetquery")
 
-   
     # -----------------------------------------------------------------------
     # statistics -> /statistics
 
