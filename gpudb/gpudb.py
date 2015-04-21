@@ -695,6 +695,20 @@ class GPUdb:
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/bulkdelete")
 
     # -----------------------------------------------------------------------
+    # bulk_delete_pk -> /bulkdeletepk
+
+    def do_bulk_delete_pk(self, set_id, pk_expressions, params = {}, user_auth=""):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("bulk_delete_pk")
+
+        datum = collections.OrderedDict()
+        datum["set_id"] = set_id
+        datum["pk_expressions"] = pk_expressions
+        datum["params"] = params
+        datum["user_auth_string"] = user_auth
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/bulkdeletepk")
+
+    # -----------------------------------------------------------------------
     # bulk_select -> /bulkselect
 
     def do_bulk_select(self, set_id, global_expression, expressions, params = {}, user_auth=""):
@@ -710,7 +724,21 @@ class GPUdb:
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/bulkselect")
 
     # -----------------------------------------------------------------------
-    # bulk_selectvalues -> /bulkselectvalues
+    # bulk_select_pk -> /bulkselectpk
+
+    def do_bulk_select_pk(self, set_id, pk_expressions, params = {}, user_auth=""):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("bulk_select_pk")
+
+        datum = collections.OrderedDict()
+        datum["set_id"] = set_id
+        datum["pk_expressions"] = pk_expressions
+        datum["params"] = params
+        datum["user_auth_string"] = user_auth
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/bulkselectpk")
+
+    # -----------------------------------------------------------------------
+    # bulk_select_values -> /bulkselectvalues
 
     def do_bulk_select_values(self, set_id, attributes, global_expression, expressions, params = {}, user_auth=""):
         (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("bulk_select_values")
@@ -724,6 +752,21 @@ class GPUdb:
         datum["user_auth_string"] = user_auth
 
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/bulkselectvalues")
+
+    # -----------------------------------------------------------------------
+    # bulk_select_values_pk -> /bulkselectvaluespk
+
+    def do_bulk_select_values_pk(self, set_id, attributes, pk_expressions, params = {}, user_auth=""):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("bulk_select_values_pk")
+
+        datum = collections.OrderedDict()
+        datum["set_id"] = set_id
+        datum["attributes"] = attributes
+        datum["pk_expressions"] = pk_expressions
+        datum["params"] = params
+        datum["user_auth_string"] = user_auth
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/bulkselectvaluespk")
 
     # -----------------------------------------------------------------------
     # bulk_update -> /bulkupdate
@@ -744,6 +787,25 @@ class GPUdb:
         datum["user_auth_string"] = user_auth
 
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/bulkupdate")
+
+    # -----------------------------------------------------------------------
+    # bulk_update_pk -> /bulkupdatepk
+
+    def do_bulk_update_pk(self, set_id, pk_expressions, new_values, objects_to_insert = [], 
+                          objects_to_insert_str = [], object_encoding = 'BINARY', params = {}, user_auth=""):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("bulk_update_pk")
+
+        datum = collections.OrderedDict()
+        datum["set_id"] = set_id
+        datum["pk_expressions"] = pk_expressions
+        datum["new_values"] = new_values
+        datum["objects_to_insert"] = objects_to_insert
+        datum["objects_to_insert_str"] = objects_to_insert_str
+        datum["object_encoding"] = object_encoding
+        datum["params"] = params
+        datum["user_auth_string"] = user_auth
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/bulkupdatepk")
 
     # -----------------------------------------------------------------------
 
