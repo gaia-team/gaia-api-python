@@ -218,6 +218,7 @@ class GPUdb:
         try:
             resp = conn.getresponse()
             resp_data = resp.read()
+            #print 'data received: ',len(resp_data)
         except: # some error occurred; return a message
             error_resp = collections.OrderedDict()
             error_resp["status"] = "ERROR"
@@ -2085,6 +2086,17 @@ class GPUdb:
         datum["user_auth_string"] = user_auth
 
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/statistics")
+
+    # -----------------------------------------------------------------------
+    # system_properties -> /systemproperties
+
+    def do_system_properties(self, new_properties_map={}):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("system_properties")
+
+        datum = collections.OrderedDict()
+        datum["new_properties_map"] = new_properties_map
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/systemproperties")
 
     # -----------------------------------------------------------------------
     # ranged_statistics -> /rangedstatistics
