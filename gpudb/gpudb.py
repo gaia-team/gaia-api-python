@@ -1505,18 +1505,6 @@ class GPUdb:
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/joinsetup")
 
     # -----------------------------------------------------------------------
-    # make_bloom -> /makebloom
-
-    def do_make_bloom(self, set_id, attribute):
-        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("make_bloom")
-
-        datum = collections.OrderedDict()
-        datum["set_id"] = set_id
-        datum["attribute"] = attribute
-
-        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/makebloom")
-
-    # -----------------------------------------------------------------------
     # max_min -> /maxmin
 
     def do_max_min(self, set_id, attribute, user_auth=""):
@@ -1794,6 +1782,18 @@ class GPUdb:
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/registerparentset")
 
     # -----------------------------------------------------------------------
+    # register_object_monitor_topic -> /registerobjectmonitortopic
+
+    def do_register_object_monitor_topic(self, set_id, params={}):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("register_object_monitor_topic")
+
+        datum = collections.OrderedDict()
+        datum["set_id"] = set_id
+        datum["params"] = params
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/registerobjectmonitortopic")
+
+    # -----------------------------------------------------------------------
     # register_trigger_nai -> /registertriggernai
 
     def do_register_trigger_nai(self, trigger_id, set_ids, xattr, xvals, yattr, yvals):
@@ -1938,23 +1938,6 @@ class GPUdb:
         datum["transform_map"] = transform_map
 
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/registertypetransform")
-
-    # -----------------------------------------------------------------------
-    # road_intersection -> /roadintersection
-
-    def do_road_intersection(self, set_id, x_attribute, y_attribute, road_x_vector, road_y_vector, output_attribute, user_auth=""):
-        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("road_intersection")
-
-        datum = collections.OrderedDict()
-        datum["set_id"] = set_id
-        datum["x_attribute"] = x_attribute
-        datum["y_attribute"] = y_attribute
-        datum["road_x_vector"] = road_x_vector
-        datum["road_y_vector"] = road_y_vector
-        datum["output_attribute"] = output_attribute
-        datum["user_auth_string"] = user_auth
-
-        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/roadintersection")
 
     # -----------------------------------------------------------------------
     # select -> /select
@@ -2186,6 +2169,17 @@ class GPUdb:
         datum["user_auth_string"] = user_auth
 
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/unique")
+
+    # -----------------------------------------------------------------------
+    # unregister_object_monitor_topic -> /unregisterobjectmonitortopic
+
+    def do_unregister_object_monitor_topic(self, topic_id):
+        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("unregister_object_monitor_topic")
+
+        datum = collections.OrderedDict()
+        datum["topic_id"] = topic_id
+
+        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/unregisterobjectmonitortopic")
 
     # -----------------------------------------------------------------------
     # update_object -> /updateobject
